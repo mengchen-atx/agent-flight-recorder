@@ -1,0 +1,25 @@
+{
+  "name": "agent-flight-recorder",
+  "version": "0.1.0",
+  "description": "Local-first recorder and replay tool for AI agent runs.",
+  "type": "module",
+  "bin": {
+    "afr": "./agent-flight-recorder.js"
+  },
+  "scripts": {
+    "start": "node agent-flight-recorder.js",
+    "demo": "node agent-flight-recorder.js demo",
+    "replay:demo": "node agent-flight-recorder.js replay --run demo-run",
+    "list": "node agent-flight-recorder.js list"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "observability",
+    "replay",
+    "mcp",
+    "local-first"
+  ],
+  "license": "MIT"
+}
+

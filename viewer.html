@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentFlightRecorder Replay</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: #0b1220;
+        color: #dbe5ff;
+      }
+      .wrap {
+        max-width: 1000px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .card {
+        background: #121b2f;
+        border: 1px solid #24314f;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .title {
+        margin: 0;
+        font-size: 24px;
+      }
+      .muted {
+        color: #9fb0d6;
+      }
+      .event {
+        border-left: 4px solid #4566ab;
+        padding-left: 12px;
+        margin: 12px 0;
+      }
+      .event.error {
+        border-left-color: #ff5e7a;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid #385287;
+        color: #bcd0ff;
+        font-size: 12px;
+      }
+      code {
+        white-space: pre-wrap;
+        display: block;
+        margin-top: 8px;
+        background: #0f1728;
+        border: 1px solid #283450;
+        border-radius: 8px;
+        padding: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1 class="title">AgentFlightRecorder</h1>
+        <p id="meta" class="muted">Loading run...</p>
+      </div>
+      <div class="card">
+        <h2>Timeline</h2>
+        <div id="timeline"></div>
+      </div>
+    </div>
+
+    <script>
+      async function load() {
+        const res = await fetch("/api/run");
+        const run = await res.json();
+        const meta = document.getElementById("meta");
+        const timeline = document.getElementById("timeline");
+
+        if (!res.ok) {
+          meta.textContent = run.error || "Failed to load run";
+          return;
+        }
+
+        meta.textContent = `${run.id} | ${run.name} | events: ${run.events.length} | updated: ${run.updatedAt}`;
+        const sorted = [...run.events].sort((a, b) => (a.step || 0) - (b.step || 0));
+        timeline.innerHTML = "";
+        for (const event of sorted) {
+          const div = document.createElement("div");
+          div.className = `event ${event.error || event.type === "error" ? "error" : ""}`;
+          const head = document.createElement("div");
+          head.innerHTML = `<span class="badge">step ${event.step}</span> <strong>${event.type}</strong> <span class="muted">${event.ts}</span>`;
+          div.appendChild(head);
+
+          if (event.message) {
+            const p = document.createElement("p");
+            p.textContent = event.message;
+            div.appendChild(p);
+          }
+          if (event.tool) {
+            const p = document.createElement("p");
+            p.innerHTML = `<span class="muted">tool:</span> ${event.tool}`;
+            div.appendChild(p);
+          }
+          if (event.error) {
+            const code = document.createElement("code");
+            code.textContent = `error: ${event.error}`;
+            div.appendChild(code);
+          }
+          if (event.durationMs != null || event.tokens != null) {
+            const p = document.createElement("p");
+            p.className = "muted";
+            p.textContent = `duration: ${event.durationMs ?? "-"}ms | tokens: ${event.tokens ?? "-"}`;
+            div.appendChild(p);
+          }
+          timeline.appendChild(div);
+        }
+      }
+
+      load().catch((err) => {
+        document.getElementById("meta").textContent = err.message;
+      });
+    </script>
+  </body>
+</html>
+
