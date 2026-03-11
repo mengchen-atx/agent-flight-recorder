@@ -9,8 +9,12 @@
   "scripts": {
     "start": "node agent-flight-recorder.js",
     "demo": "node agent-flight-recorder.js demo",
+    "demo2": "node agent-flight-recorder.js demo2",
     "replay:demo": "node agent-flight-recorder.js replay --run demo-run",
-    "list": "node agent-flight-recorder.js list"
+    "list": "node agent-flight-recorder.js list",
+    "export:demo": "node agent-flight-recorder.js export --run demo-run --format html",
+    "export:demo:md": "node agent-flight-recorder.js export --run demo-run --format md",
+    "diff:demo": "node agent-flight-recorder.js demo2 && node agent-flight-recorder.js diff --base demo-run --head demo-run-v2"
   },
   "keywords": [
     "ai",

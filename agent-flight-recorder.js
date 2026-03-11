@@ -7,10 +7,12 @@ import { randomUUID } from "crypto";
 
 const STORE_DIR = join(process.cwd(), ".agent-flight-recorder");
 const RUN_DIR = join(STORE_DIR, "runs");
+const EXPORT_DIR = join(STORE_DIR, "exports");
 
 function ensureStore() {
   if (!existsSync(STORE_DIR)) mkdirSync(STORE_DIR, { recursive: true });
   if (!existsSync(RUN_DIR)) mkdirSync(RUN_DIR, { recursive: true });
+  if (!existsSync(EXPORT_DIR)) mkdirSync(EXPORT_DIR, { recursive: true });
 }
 
 function runPath(runId) {
@@ -95,7 +97,10 @@ Commands:
   afr ingest --run <id> --file <json-file>
   afr list
   afr replay --run <id> [--port 8787]
+  afr export --run <id> [--format html|md] [--out <output-file>]
+  afr diff --base <run-id> --head <run-id>
   afr demo
+  afr demo2
 `);
 }
 
@@ -132,6 +137,153 @@ function startViewer(runId, port) {
     console.log(`Replay UI: http://localhost:${port}`);
     console.log(`Run ID: ${runId}`);
   });
+}
+
+function sortEvents(events) {
+  return [...events].sort((a, b) => (a.step || 0) - (b.step || 0));
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function runMetrics(run) {
+  const events = sortEvents(run.events || []);
+  const errors = events.filter((evt) => evt.error || evt.type === "error");
+  const durationMs = events.reduce((sum, evt) => sum + (evt.durationMs || 0), 0);
+  const tokens = events.reduce((sum, evt) => sum + (evt.tokens || 0), 0);
+  return {
+    eventCount: events.length,
+    errorCount: errors.length,
+    durationMs,
+    tokens
+  };
+}
+
+function renderMarkdownReport(run) {
+  const events = sortEvents(run.events || []);
+  const metrics = runMetrics(run);
+  const lines = [];
+  lines.push(`# AgentFlightRecorder Report: ${run.name}`);
+  lines.push("");
+  lines.push(`- Run ID: \`${run.id}\``);
+  lines.push(`- Source: \`${run.source}\``);
+  lines.push(`- Created: \`${run.createdAt}\``);
+  lines.push(`- Updated: \`${run.updatedAt}\``);
+  lines.push(`- Events: \`${metrics.eventCount}\``);
+  lines.push(`- Errors: \`${metrics.errorCount}\``);
+  lines.push(`- Total duration: \`${metrics.durationMs}ms\``);
+  lines.push(`- Total tokens: \`${metrics.tokens}\``);
+  lines.push("");
+  lines.push("## Timeline");
+  lines.push("");
+  for (const evt of events) {
+    lines.push(`### Step ${evt.step} - ${evt.type}`);
+    lines.push(`- Time: \`${evt.ts}\``);
+    if (evt.message) lines.push(`- Message: ${evt.message}`);
+    if (evt.tool) lines.push(`- Tool: \`${evt.tool}\``);
+    if (evt.error) lines.push(`- Error: \`${evt.error}\``);
+    if (evt.durationMs != null) lines.push(`- Duration: \`${evt.durationMs}ms\``);
+    if (evt.tokens != null) lines.push(`- Tokens: \`${evt.tokens}\``);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function renderHtmlReport(run) {
+  const events = sortEvents(run.events || []);
+  const metrics = runMetrics(run);
+  const items = events
+    .map((evt) => {
+      const hasError = evt.error || evt.type === "error";
+      return `
+        <article class="event ${hasError ? "error" : ""}">
+          <header><span class="badge">step ${escapeHtml(evt.step)}</span> <strong>${escapeHtml(evt.type)}</strong></header>
+          <p class="muted">${escapeHtml(evt.ts)}</p>
+          ${evt.message ? `<p>${escapeHtml(evt.message)}</p>` : ""}
+          ${evt.tool ? `<p><span class="muted">tool:</span> ${escapeHtml(evt.tool)}</p>` : ""}
+          ${evt.error ? `<pre>${escapeHtml(evt.error)}</pre>` : ""}
+          ${(evt.durationMs != null || evt.tokens != null) ? `<p class="muted">duration: ${escapeHtml(evt.durationMs ?? "-")}ms | tokens: ${escapeHtml(evt.tokens ?? "-")}</p>` : ""}
+        </article>
+      `;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AFR Export - ${escapeHtml(run.id)}</title>
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0b1220; color: #dbe5ff; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; }
+    .card { background: #121b2f; border: 1px solid #24314f; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid #385287; color: #bcd0ff; font-size: 12px; }
+    .event { border-left: 4px solid #4566ab; padding-left: 12px; margin: 12px 0; }
+    .event.error { border-left-color: #ff5e7a; }
+    .muted { color: #9fb0d6; }
+    pre { white-space: pre-wrap; background: #0f1728; border: 1px solid #283450; border-radius: 8px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>AgentFlightRecorder Report</h1>
+      <p><strong>${escapeHtml(run.name)}</strong></p>
+      <p class="muted">run=${escapeHtml(run.id)} | source=${escapeHtml(run.source)} | events=${metrics.eventCount} | errors=${metrics.errorCount}</p>
+      <p class="muted">totalDuration=${metrics.durationMs}ms | totalTokens=${metrics.tokens}</p>
+    </div>
+    <div class="card">
+      <h2>Timeline</h2>
+      ${items}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function exportRun(runId, format, out) {
+  const run = loadRun(runId);
+  const normalized = format === "markdown" ? "md" : (format || "html");
+  if (!["html", "md"].includes(normalized)) {
+    throw new Error("Invalid --format. Use html or md");
+  }
+  const outputFile = out || join(EXPORT_DIR, `${run.id}.${normalized === "md" ? "md" : "html"}`);
+  const content = normalized === "md" ? renderMarkdownReport(run) : renderHtmlReport(run);
+  writeFileSync(outputFile, content, "utf8");
+  console.log(`Exported ${normalized.toUpperCase()} report: ${outputFile}`);
+}
+
+function diffRuns(baseId, headId) {
+  const base = loadRun(baseId);
+  const head = loadRun(headId);
+  const bm = runMetrics(base);
+  const hm = runMetrics(head);
+  const eventDelta = hm.eventCount - bm.eventCount;
+  const errorDelta = hm.errorCount - bm.errorCount;
+  const durationDelta = hm.durationMs - bm.durationMs;
+  const tokenDelta = hm.tokens - bm.tokens;
+
+  const baseErrorSteps = new Set(sortEvents(base.events).filter((evt) => evt.error || evt.type === "error").map((evt) => evt.step));
+  const headErrorSteps = new Set(sortEvents(head.events).filter((evt) => evt.error || evt.type === "error").map((evt) => evt.step));
+  const resolvedErrorSteps = [...baseErrorSteps].filter((step) => !headErrorSteps.has(step));
+  const newErrorSteps = [...headErrorSteps].filter((step) => !baseErrorSteps.has(step));
+
+  console.log(`Diff: ${baseId} -> ${headId}`);
+  console.log("");
+  console.log(`Events: ${bm.eventCount} -> ${hm.eventCount} (${eventDelta >= 0 ? "+" : ""}${eventDelta})`);
+  console.log(`Errors: ${bm.errorCount} -> ${hm.errorCount} (${errorDelta >= 0 ? "+" : ""}${errorDelta})`);
+  console.log(`Total duration(ms): ${bm.durationMs} -> ${hm.durationMs} (${durationDelta >= 0 ? "+" : ""}${durationDelta})`);
+  console.log(`Total tokens: ${bm.tokens} -> ${hm.tokens} (${tokenDelta >= 0 ? "+" : ""}${tokenDelta})`);
+  console.log("");
+  console.log(`Resolved error steps: ${resolvedErrorSteps.length ? resolvedErrorSteps.join(", ") : "none"}`);
+  console.log(`New error steps: ${newErrorSteps.length ? newErrorSteps.join(", ") : "none"}`);
 }
 
 function main() {
@@ -199,6 +351,19 @@ function main() {
     return;
   }
 
+  if (cmd === "export") {
+    if (!args.run) throw new Error("Missing --run");
+    exportRun(args.run, args.format, args.out);
+    return;
+  }
+
+  if (cmd === "diff") {
+    if (!args.base) throw new Error("Missing --base");
+    if (!args.head) throw new Error("Missing --head");
+    diffRuns(args.base, args.head);
+    return;
+  }
+
   if (cmd === "demo") {
     const demoId = "demo-run";
     createRun({ id: demoId, name: "Demo agent bugfix flow", source: "demo" });
@@ -208,6 +373,17 @@ function main() {
     addEvent(demoId, { type: "tool_call", step: 4, tool: "edit", message: "Patch parser null handling", durationMs: 1800, tokens: 245 });
     addEvent(demoId, { type: "success", step: 5, message: "Tests pass and PR ready.", durationMs: 900, tokens: 38 });
     console.log("Demo run created: demo-run");
+    return;
+  }
+
+  if (cmd === "demo2") {
+    const demoId = "demo-run-v2";
+    createRun({ id: demoId, name: "Demo agent bugfix flow v2", source: "demo" });
+    addEvent(demoId, { type: "thought", step: 1, message: "Investigating failing test suite." });
+    addEvent(demoId, { type: "tool_call", step: 2, tool: "bash", message: "npm test", durationMs: 2500, tokens: 110 });
+    addEvent(demoId, { type: "tool_call", step: 3, tool: "edit", message: "Patch parser null handling", durationMs: 1400, tokens: 200 });
+    addEvent(demoId, { type: "success", step: 4, message: "Tests pass and PR ready.", durationMs: 700, tokens: 30 });
+    console.log("Demo run created: demo-run-v2");
     return;
   }
 
